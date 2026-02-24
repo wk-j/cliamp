@@ -110,6 +110,42 @@ func (v *Visualizer) Analyze(samples []float64) [numBands]float64 {
 	return bands
 }
 
+// RenderDynamic converts band levels into a spectrum bar string sized to fit the given width.
+// It uses all 10 bands and computes bar width to fill the available space.
+func (v *Visualizer) RenderDynamic(bands [numBands]float64, availWidth int) string {
+	if availWidth < numBands {
+		return ""
+	}
+	// availWidth = numBands*bw + (numBands-1) separators
+	bw := (availWidth - (numBands - 1)) / numBands
+	if bw < 1 {
+		bw = 1
+	}
+
+	var sb strings.Builder
+	for i, level := range bands {
+		idx := int(level * float64(len(barBlocks)-1))
+		idx = max(0, min(idx, len(barBlocks)-1))
+		block := barBlocks[idx]
+
+		var style lipgloss.Style
+		switch {
+		case level > 0.75:
+			style = specHighStyle
+		case level > 0.45:
+			style = specMidStyle
+		default:
+			style = specLowStyle
+		}
+
+		sb.WriteString(style.Render(strings.Repeat(block, bw)))
+		if i < numBands-1 {
+			sb.WriteString(" ")
+		}
+	}
+	return sb.String()
+}
+
 // Render converts band levels into a colored spectrum bar string.
 func (v *Visualizer) Render(bands [numBands]float64) string {
 	var sb strings.Builder

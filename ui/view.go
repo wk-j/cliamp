@@ -7,7 +7,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const panelWidth = 60 // usable inner width (66 frame - 2 border - 4 padding)
+const (
+	panelWidth        = 60 // usable inner width (66 frame - 2 border - 4 padding)
+	miniPanelMinW     = 28 // minimum usable inner width for mini mode
+	miniFrameOverhead = 4  // border (2) + padding (2×1) for mini frame
+)
 
 // Pre-built styles for elements created per-render to avoid repeated allocation.
 var (
@@ -17,32 +21,63 @@ var (
 	activeToggle  = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 )
 
+// pw returns the usable inner panel width for the current mode.
+func (m Model) pw() int {
+	if m.mini {
+		w := m.width - miniFrameOverhead
+		if w < miniPanelMinW {
+			w = miniPanelMinW
+		}
+		return w
+	}
+	return panelWidth
+}
+
+// miniFrameW returns the outer frame width for mini mode.
+func (m Model) miniFrameW() int {
+	w := m.width
+	if w < miniPanelMinW+miniFrameOverhead {
+		w = miniPanelMinW + miniFrameOverhead
+	}
+	return w
+}
+
 // View renders the full TUI frame.
 func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
 
-	sections := []string{
-		// Now playing
-		m.renderTitle(),
-		m.renderTrackInfo(),
-		m.renderTimeStatus(),
-		"",
-		// Visualizer
-		m.renderSpectrum(),
-		m.renderSeekBar(),
-		"",
-		// Controls
-		m.renderVolume(),
-		m.renderEQ(),
-		"",
-		// Playlist
-		m.renderPlaylistHeader(),
-		m.renderPlaylist(),
-		"",
-		// Help
-		m.renderHelp(),
+	var sections []string
+	if m.mini {
+		sections = []string{
+			m.renderTitle(),
+			m.renderTrackInfo(),
+			m.renderTimeStatus(),
+			m.renderSpectrum(),
+			m.renderSeekBar(),
+			m.renderVolume(),
+			m.renderPlaylistHeader(),
+			m.renderPlaylist(),
+			m.renderHelp(),
+		}
+	} else {
+		sections = []string{
+			m.renderTitle(),
+			m.renderTrackInfo(),
+			m.renderTimeStatus(),
+			"",
+			m.renderSpectrum(),
+			m.renderSeekBar(),
+			"",
+			m.renderVolume(),
+			m.renderEQ(),
+			"",
+			m.renderPlaylistHeader(),
+			m.renderPlaylist(),
+			"",
+			m.renderHelp(),
+		}
 	}
 
 	if m.err != nil {
@@ -50,6 +85,9 @@ func (m Model) View() string {
 	}
 
 	content := strings.Join(sections, "\n")
+	if m.mini {
+		return miniFrameStyle.Width(m.miniFrameW()).Render(content)
+	}
 	return frameStyle.Render(content)
 }
 
@@ -64,15 +102,23 @@ func (m Model) renderTrackInfo() string {
 		name = "No track loaded"
 	}
 
-	maxW := panelWidth - 4
+	pw := m.pw()
+	prefix := "\U000f0e1e "
+	if m.mini {
+		prefix = "♫ "
+	}
+	maxW := pw - len([]rune(prefix))
 	runes := []rune(name)
 
 	if len(runes) <= maxW {
-		return trackStyle.Render("♫ " + name)
+		return trackStyle.Render(prefix + name)
 	}
 
 	// Cyclic scrolling for long titles
-	sep := []rune("   ♫   ")
+	sep := []rune("   \U000f0e1e   ")
+	if m.mini {
+		sep = []rune("  ♫  ")
+	}
 	padded := append(runes, sep...)
 	total := len(padded)
 	off := m.titleOff % total
@@ -81,7 +127,7 @@ func (m Model) renderTrackInfo() string {
 	for i := range maxW {
 		display[i] = padded[(off+i)%total]
 	}
-	return trackStyle.Render("♫ " + string(display))
+	return trackStyle.Render(prefix + string(display))
 }
 
 func (m Model) renderTimeStatus() string {
@@ -96,17 +142,28 @@ func (m Model) renderTimeStatus() string {
 	timeStr := fmt.Sprintf("%02d:%02d / %02d:%02d", posMin, posSec, durMin, durSec)
 
 	var status string
-	switch {
-	case m.player.IsPlaying() && m.player.IsPaused():
-		status = statusStyle.Render("⏸ Paused")
-	case m.player.IsPlaying():
-		status = statusStyle.Render("▶ Playing")
-	default:
-		status = dimStyle.Render("■ Stopped")
+	if m.mini {
+		switch {
+		case m.player.IsPlaying() && m.player.IsPaused():
+			status = statusStyle.Render("\uf04c")
+		case m.player.IsPlaying():
+			status = statusStyle.Render("\uf04b")
+		default:
+			status = dimStyle.Render("\uf04d")
+		}
+	} else {
+		switch {
+		case m.player.IsPlaying() && m.player.IsPaused():
+			status = statusStyle.Render("\uf04c Paused")
+		case m.player.IsPlaying():
+			status = statusStyle.Render("\uf04b Playing")
+		default:
+			status = dimStyle.Render("\uf04d Stopped")
+		}
 	}
 
 	left := timeStyle.Render(timeStr)
-	gap := panelWidth - lipgloss.Width(left) - lipgloss.Width(status)
+	gap := m.pw() - lipgloss.Width(left) - lipgloss.Width(status)
 	if gap < 1 {
 		gap = 1
 	}
@@ -116,6 +173,9 @@ func (m Model) renderTimeStatus() string {
 
 func (m Model) renderSpectrum() string {
 	bands := m.vis.Analyze(m.player.Samples())
+	if m.mini {
+		return m.vis.RenderDynamic(bands, m.pw())
+	}
 	return m.vis.Render(bands)
 }
 
@@ -129,23 +189,34 @@ func (m Model) renderSeekBar() string {
 	}
 	progress = max(0, min(1, progress))
 
-	filled := int(progress * float64(panelWidth-1))
+	pw := m.pw()
+	filled := int(progress * float64(pw-1))
 
 	return seekFillStyle.Render(strings.Repeat("━", filled)) +
 		seekFillStyle.Render("●") +
-		seekDimStyle.Render(strings.Repeat("━", max(0, panelWidth-filled-1)))
+		seekDimStyle.Render(strings.Repeat("━", max(0, pw-filled-1)))
 }
 
 func (m Model) renderVolume() string {
 	vol := m.player.Volume()
 	frac := max(0, min(1, (vol+30)/36))
 
+	if m.mini {
+		// "V " (2) + bar + " -30" (4) = 6 overhead
+		barW := m.pw() - 6
+		if barW < 4 {
+			barW = 4
+		}
+		filled := int(frac * float64(barW))
+		bar := volBarStyle.Render(strings.Repeat("█", filled)) +
+			dimStyle.Render(strings.Repeat("░", barW-filled))
+		return labelStyle.Render("V ") + bar + dimStyle.Render(fmt.Sprintf(" %+.0f", vol))
+	}
+
 	barW := 22
 	filled := int(frac * float64(barW))
-
 	bar := volBarStyle.Render(strings.Repeat("█", filled)) +
 		dimStyle.Render(strings.Repeat("░", barW-filled))
-
 	return labelStyle.Render("VOL ") + bar + dimStyle.Render(fmt.Sprintf(" %+.1fdB", vol))
 }
 
@@ -168,6 +239,22 @@ func (m Model) renderEQ() string {
 
 func (m Model) renderPlaylistHeader() string {
 	var shuffle string
+	if m.playlist.Shuffled() {
+		shuffle = activeToggle.Render("[S]")
+	} else {
+		shuffle = dimStyle.Render("[S]")
+	}
+
+	if m.mini {
+		var repeat string
+		if m.playlist.Repeat() != 0 {
+			repeat = activeToggle.Render(fmt.Sprintf("[R:%s]", m.playlist.Repeat()))
+		} else {
+			repeat = dimStyle.Render("[R]")
+		}
+		return dimStyle.Render("─ Playlist ─ ") + shuffle + " " + repeat
+	}
+
 	if m.playlist.Shuffled() {
 		shuffle = activeToggle.Render("[Shuffle]")
 	} else {
@@ -205,7 +292,7 @@ func (m Model) renderPlaylist() string {
 		style := playlistItemStyle
 
 		if i == currentIdx && m.player.IsPlaying() {
-			prefix = "▶ "
+			prefix = "\uf04b "
 			style = playlistActiveStyle
 		}
 
@@ -214,7 +301,7 @@ func (m Model) renderPlaylist() string {
 		}
 
 		name := tracks[i].DisplayName()
-		maxW := panelWidth - 6
+		maxW := m.pw() - 6
 		nameRunes := []rune(name)
 		if len(nameRunes) > maxW {
 			name = string(nameRunes[:maxW-1]) + "…"
@@ -227,5 +314,8 @@ func (m Model) renderPlaylist() string {
 }
 
 func (m Model) renderHelp() string {
-	return helpStyle.Render("[Spc]⏯  [<>]Trk [←→]Seek [+-]Vol [Tab]Focus [Q]Quit")
+	if m.mini {
+		return helpStyle.Render("[Spc]Play [<>]Trk [Q]Quit")
+	}
+	return helpStyle.Render("[Spc]\U000f040e  [<>]Trk [\uf060\uf061]Seek [+-]Vol [Tab]Focus [Q]Quit")
 }

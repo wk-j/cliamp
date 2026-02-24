@@ -18,6 +18,7 @@ const (
 )
 
 type tickMsg time.Time
+type autoPlayMsg struct{}
 
 // Model is the Bubbletea model for the CLIAMP TUI.
 type Model struct {
@@ -30,6 +31,8 @@ type Model struct {
 	plScroll  int // scroll offset for playlist view
 	plVisible int // max visible playlist items
 	titleOff  int // scroll offset for long track titles
+	autoPlay  bool
+	mini      bool // compact minimal UI mode
 	err       error
 	quitting  bool
 	width     int
@@ -37,18 +40,28 @@ type Model struct {
 }
 
 // NewModel creates a Model wired to the given player and playlist.
-func NewModel(p *player.Player, pl *playlist.Playlist) Model {
+func NewModel(p *player.Player, pl *playlist.Playlist, autoPlay bool, mini bool) Model {
+	plVis := 5
+	if mini {
+		plVis = 3
+	}
 	return Model{
 		player:    p,
 		playlist:  pl,
 		vis:       NewVisualizer(44100),
-		plVisible: 5,
+		plVisible: plVis,
+		autoPlay:  autoPlay,
+		mini:      mini,
 	}
 }
 
 // Init starts the tick timer and requests the terminal size.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(tickCmd(), tea.WindowSize())
+	cmds := []tea.Cmd{tickCmd(), tea.WindowSize()}
+	if m.autoPlay {
+		cmds = append(cmds, func() tea.Msg { return autoPlayMsg{} })
+	}
+	return tea.Batch(cmds...)
 }
 
 func tickCmd() tea.Cmd {
@@ -70,6 +83,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+	case autoPlayMsg:
+		m.playCurrentTrack()
+		return m, nil
 
 	case tickMsg:
 		// Check if the current track finished naturally

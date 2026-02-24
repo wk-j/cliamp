@@ -28,6 +28,11 @@ var (
 			Padding(1, 2).
 			Width(66)
 
+	miniFrameStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorBorder).
+			Padding(0, 1)
+
 	titleStyle = lipgloss.NewStyle().
 			Foreground(colorTitle).
 			Bold(true)

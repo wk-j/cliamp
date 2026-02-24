@@ -3,6 +3,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,13 +17,22 @@ import (
 )
 
 func run() error {
-	if len(os.Args) < 2 {
-		return errors.New("usage: cliamp <file.mp3> [file2.mp3 ...]")
+	autoPlay := flag.Bool("autoplay", false, "start playing the first track immediately")
+	mini := flag.Bool("mini", false, "compact minimal UI with less width")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: cliamp [flags] <file.mp3> [file2.mp3 ...]\n\nFlags:\n")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	args := flag.Args()
+	if len(args) == 0 {
+		return errors.New("usage: cliamp [--autoplay] <file.mp3> [file2.mp3 ...]")
 	}
 
 	// Expand shell globs that may not have been expanded by the shell
 	var files []string
-	for _, arg := range os.Args[1:] {
+	for _, arg := range args {
 		matches, err := filepath.Glob(arg)
 		if err != nil || len(matches) == 0 {
 			files = append(files, arg)
@@ -43,7 +53,7 @@ func run() error {
 	defer p.Close()
 
 	// Launch the TUI
-	m := ui.NewModel(p, pl)
+	m := ui.NewModel(p, pl, *autoPlay, *mini)
 	prog := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("tui: %w", err)
